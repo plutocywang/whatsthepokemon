@@ -8,8 +8,6 @@ export default async function handler(req, res) {
 
         // 🔒 安全關鍵：從 Vercel 雲端後台的秘密保險箱（環境變數）讀取金鑰
         const apiKey = process.env.GEMINI_API_KEY;
-        const model = "gemini-3.6-flash";
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
         if (!apiKey) {
             console.error('[Gemini] Missing GEMINI_API_KEY');
@@ -54,26 +52,38 @@ export default async function handler(req, res) {
             })
         };
 
+        const modelPlans = [
+            { model: "gemini-3.6-flash", retryDelays: [] },
+            { model: "gemini-3.1-flash-lite", retryDelays: [800, 1800] }
+        ];
         const retryableStatuses = new Set([429, 500, 502, 503, 504]);
-        const retryDelays = [800, 1800];
         let response;
         let upstreamError = '';
 
-        for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
-            response = await fetch(apiUrl, requestOptions);
+        modelLoop:
+        for (const { model, retryDelays } of modelPlans) {
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
-            if (response.ok) break;
+            for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+                response = await fetch(apiUrl, requestOptions);
 
-            upstreamError = await response.text();
-            console.error(
-                `[Gemini] ${model} attempt ${attempt + 1} failed with ${response.status}: ${upstreamError}`
-            );
+                if (response.ok) break modelLoop;
 
-            if (!retryableStatuses.has(response.status) || attempt === retryDelays.length) {
-                break;
+                upstreamError = await response.text();
+                console.error(
+                    `[Gemini] ${model} attempt ${attempt + 1} failed with ${response.status}: ${upstreamError}`
+                );
+
+                if (!retryableStatuses.has(response.status)) {
+                    break modelLoop;
+                }
+
+                if (attempt === retryDelays.length) {
+                    break;
+                }
+
+                await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
             }
-
-            await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
         }
 
         if (!response.ok) {
