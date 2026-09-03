@@ -4,11 +4,21 @@ export default async function handler(req, res) {
     }
 
     try {
-        const { image } = req.body;
-        
+        const { image } = req.body || {};
+
         // 🔒 安全關鍵：從 Vercel 雲端後台的秘密保險箱（環境變數）讀取金鑰
         const apiKey = process.env.GEMINI_API_KEY;
-        const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
+        const model = "gemini-2.5-flash";
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+        if (!apiKey) {
+            console.error('[Gemini] Missing GEMINI_API_KEY');
+            return res.status(500).json({ error: '伺服器尚未設定 Gemini API Key' });
+        }
+
+        if (!image || typeof image !== 'string') {
+            return res.status(400).json({ error: '圖片資料不完整，請重新上傳' });
+        }
 
         const promptText = `你是一位資深的寶可夢生態學家，在玉虹市（Celadon City）大學擔任教授。請觀察附帶圖片，這是一個剛被發現的神秘生命體。
         請根據圖片中的生物特徵，嚴格依照以下 JSON 格式建立合理的、充滿幻想與寶可夢世界設定的生態圖鑑資料。
@@ -27,7 +37,7 @@ export default async function handler(req, res) {
             "description": "約120字偽科學、帶有幻想與傳說色彩的生態描述。請描述牠覓食時的奇特機制、情緒高漲時身體（如耳朵或尾巴）會有什麼不為人知的變化、或者與古代遺跡的神秘關聯。讓文案讀起來像官方圖鑑。"
         }`;
 
-        const response = await fetch(apiUrl, {
+        const requestOptions = {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -42,19 +52,54 @@ export default async function handler(req, res) {
                 }],
                 generationConfig: { responseMimeType: "application/json" }
             })
-        });
+        };
+
+        const retryableStatuses = new Set([429, 500, 502, 503, 504]);
+        const retryDelays = [800, 1800];
+        let response;
+        let upstreamError = '';
+
+        for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+            response = await fetch(apiUrl, requestOptions);
+
+            if (response.ok) break;
+
+            upstreamError = await response.text();
+            console.error(
+                `[Gemini] ${model} attempt ${attempt + 1} failed with ${response.status}: ${upstreamError}`
+            );
+
+            if (!retryableStatuses.has(response.status) || attempt === retryDelays.length) {
+                break;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, retryDelays[attempt]));
+        }
 
         if (!response.ok) {
-            return res.status(response.status).json({ error: "Gemini Remote Server Error" });
+            const status = response.status;
+            const message = status === 429
+                ? 'Gemini 使用量已達上限，請稍後再試'
+                : status >= 500
+                    ? 'Gemini 目前忙碌中，請稍後再試'
+                    : 'Gemini 無法分析這張圖片';
+
+            return res.status(status).json({ error: message });
         }
 
         const result = await response.json();
-        const jsonText = result.candidates[0].content.parts[0].text;
+        const jsonText = result?.candidates?.[0]?.content?.parts?.find(part => part.text)?.text;
+
+        if (!jsonText) {
+            console.error('[Gemini] Response did not contain JSON text:', JSON.stringify(result));
+            return res.status(502).json({ error: 'Gemini 回傳的圖鑑資料不完整' });
+        }
         
         // 把乾淨的怪獸資料回傳給前端
         return res.status(200).json(JSON.parse(jsonText));
 
     } catch (error) {
-        return res.status(500).json({ error: error.message });
+        console.error('[Pokedex API] Unexpected error:', error);
+        return res.status(500).json({ error: '圖鑑分析時發生錯誤，請稍後再試' });
     }
 }
