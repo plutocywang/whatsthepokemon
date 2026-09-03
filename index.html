@@ -70,7 +70,7 @@
         function processMonsterWorkflow() {
             let width = Math.floor(originalImg.width);
             let height = Math.floor(originalImg.height);
-            const targetDim = 500; 
+            const targetDim = 384;
             if (width > targetDim || height > targetDim) {
                 if (width > height) { height = Math.floor((targetDim / width) * height); width = targetDim; }
                 else { width = Math.floor((targetDim / height) * width); height = targetDim; }
@@ -87,16 +87,72 @@
             let imgData = tempCtx.getImageData(0, 0, width, height);
             let pixels = imgData.data;
             let grid = new Uint8Array(width * height);
+
+            // 用整圈邊緣的中位數估算紙張背景，不再假設背景必須是純白色。
+            const edgeColors = [];
+            const addEdgeColor = (x, y) => {
+                const pixelIndex = (y * width + x) * 4;
+                if (pixels[pixelIndex + 3] > 50) {
+                    edgeColors.push([
+                        pixels[pixelIndex],
+                        pixels[pixelIndex + 1],
+                        pixels[pixelIndex + 2]
+                    ]);
+                }
+            };
+
+            for (let x = 0; x < width; x++) {
+                addEdgeColor(x, 0);
+                addEdgeColor(x, height - 1);
+            }
+            for (let y = 1; y < height - 1; y++) {
+                addEdgeColor(0, y);
+                addEdgeColor(width - 1, y);
+            }
+
+            const median = values => {
+                const sorted = values.sort((a, b) => a - b);
+                return sorted[Math.floor(sorted.length / 2)] ?? 255;
+            };
+            const backgroundColor = [0, 1, 2].map(channel =>
+                median(edgeColors.map(color => color[channel]))
+            );
+            const backgroundBrightness = (
+                backgroundColor[0] + backgroundColor[1] + backgroundColor[2]
+            ) / 3;
+
             for (let i = 0; i < pixels.length; i += 4) {
                 const brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
-                if (pixels[i + 3] > 50 && brightness < 220) { grid[i / 4] = 1; } 
-                else { grid[i / 4] = 0; }
+                const colorDistance = Math.hypot(
+                    pixels[i] - backgroundColor[0],
+                    pixels[i + 1] - backgroundColor[1],
+                    pixels[i + 2] - backgroundColor[2]
+                );
+                const isBackground = pixels[i + 3] <= 50
+                    || colorDistance <= 85
+                    || (backgroundBrightness > 210 && brightness > 210);
+
+                grid[i / 4] = isBackground ? 0 : 1;
             }
 
             let stack = [];
             const w = width; const h = height;
-            const corners = [0, w - 1, (h - 1) * w, h * w - 1];
-            corners.forEach(idx => { if (grid[idx] === 0) { grid[idx] = 2; stack.push(idx); } });
+            const seedBackground = idx => {
+                if (grid[idx] === 0) {
+                    grid[idx] = 2;
+                    stack.push(idx);
+                }
+            };
+
+            // 從整圈邊界搜尋背景，即使線條或陰影碰到其中一個角落也能正常去背。
+            for (let x = 0; x < w; x++) {
+                seedBackground(x);
+                seedBackground((h - 1) * w + x);
+            }
+            for (let y = 1; y < h - 1; y++) {
+                seedBackground(y * w);
+                seedBackground(y * w + w - 1);
+            }
 
             while (stack.length > 0) {
                 let idx = stack.pop();
