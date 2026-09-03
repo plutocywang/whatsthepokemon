@@ -8,7 +8,7 @@ export default async function handler(req, res) {
 
         // 🔒 安全關鍵：從 Vercel 雲端後台的秘密保險箱（環境變數）讀取金鑰
         const apiKey = process.env.GEMINI_API_KEY;
-        const model = "gemini-2.5-flash";
+        const model = "gemini-3.6-flash";
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
         if (!apiKey) {
