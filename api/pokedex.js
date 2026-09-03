@@ -48,13 +48,17 @@ export default async function handler(req, res) {
                         { inlineData: { mimeType: "image/jpeg", data: image } }
                     ]
                 }],
-                generationConfig: { responseMimeType: "application/json" }
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    maxOutputTokens: 1024,
+                    thinkingConfig: { thinkingLevel: "minimal" }
+                }
             })
         };
 
         const modelPlans = [
-            { model: "gemini-3.6-flash", retryDelays: [] },
-            { model: "gemini-3.1-flash-lite", retryDelays: [800, 1800] }
+            { model: "gemini-3.1-flash-lite", retryDelays: [] },
+            { model: "gemini-3.6-flash", retryDelays: [600, 1400] }
         ];
         const retryableStatuses = new Set([429, 500, 502, 503, 504]);
         let response;
