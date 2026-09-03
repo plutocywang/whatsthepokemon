@@ -120,6 +120,7 @@
             ctx.putImageData(finalImgData, 0, 0);
 
             uploadBtn.style.display = 'none'; 
+            loadingText.innerText = "Gemini 大師正在分析神秘圖騰中...";
             loadingText.style.display = 'block';
 
             const aiCanvas = document.createElement('canvas');
@@ -135,13 +136,23 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: cleanBase64 })
             })
-            .then(response => { if (!response.ok) throw new Error(); return response.json(); })
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(data.error || `連線失敗（${response.status}）`);
+                }
+                return data;
+            })
             .then(data => {
                 window.monsterData = data;
                 loadingText.style.display = 'none';
                 revealBtn.style.display = 'block'; 
             })
-            .catch(() => { loadingText.innerText = "分析大師連線失敗，請稍候再試。"; });
+            .catch(error => {
+                loadingText.innerText = error.message || "分析大師連線失敗，請稍候再試。";
+                uploadBtn.style.display = 'block';
+                uploadBtn.value = "";
+            });
         }
 
         revealBtn.addEventListener('click', function() {
